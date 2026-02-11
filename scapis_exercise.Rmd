@@ -1,0 +1,1117 @@
+---
+title: "SCAPIS Proteomics & Cardiovascular Risk Exercise"
+subtitle: "Biostatistics in R — 53 Questions"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo    = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width  = 8,
+  fig.height = 5
+)
+```
+
+# Introduction
+
+## Prerequisites
+
+Before starting, generate the simulated dataset by running:
+
+```r
+source("scripts/00_generate_data.R")
+```
+
+Or run the full pipeline with `source("scripts/run_all.R")`.
+
+## Background
+
+The **Swedish CArdioPulmonary bioImage Study (SCAPIS)** is a large population-based cohort of 30,154 participants aged 50–64. Participants underwent extensive phenotyping including coronary artery calcium scoring (CACS) by CT, blood-based proteomics (Olink), and detailed clinical measurements.
+
+In this exercise you will work with a **simulated dataset** (`data/raw/scapis_simulated.csv`, n = 1,000) that mimics the structure of SCAPIS. The dataset includes:
+
+- **Clinical variables**: demographics, anthropometry, blood pressure, lipids, glucose, inflammatory markers, renal function, lifestyle, medications, and pulmonary function.
+- **CACS**: continuous score, binary (0 vs >0), and categorical (0 / 1–100 / 101–400 / >400).
+- **25 plasma proteins** measured in Olink NPX units. Ten proteins are designed to be associated with CACS, and 15 are null (no true association).
+- **Survival data**: time-to-event, CVD event indicator, and event type (MI or Stroke).
+
+Some variables contain **realistic missing data** (~3–8%).
+
+## Packages
+
+Install any missing packages before you begin.
+
+```{r packages}
+library(tidyverse)
+library(gtsummary)
+library(survival)
+library(survminer)
+library(mice)
+library(naniar)
+library(corrplot)
+library(broom)
+library(ggrepel)
+library(htmlTable)
+library(table1)
+```
+
+---
+
+# Section 1 — Data Loading & Exploration {.tabset}
+
+## Q1: Load the dataset
+
+Load `data/raw/scapis_simulated.csv` into a data frame called `scapis`. Print the dimensions of the dataset.
+
+<details><summary>Hint</summary>
+Use `read_csv("data/raw/scapis_simulated.csv")` from the `readr` package (loaded with `tidyverse`). Then call `dim(scapis)` to see the number of rows and columns.
+</details>
+
+```{r q1}
+
+```
+
+## Q2: Inspect structure
+
+Display the structure of the dataset. How many numeric vs character columns are there?
+
+<details><summary>Hint</summary>
+Use `str(scapis)` or `glimpse(scapis)`. Count the column types from the output.
+</details>
+
+```{r q2}
+
+```
+
+## Q3: Summary statistics
+
+Print a summary of the first 15 columns of the dataset. What are the min and max ages?
+
+<details><summary>Hint</summary>
+Use `summary(scapis[, 1:15])`. Look at the `age` row for Min. and Max.
+</details>
+
+```{r q3}
+
+```
+
+## Q4: Convert to factors
+
+Convert `sex`, `smoking`, `physical_activity`, and `cacs_cat` to factors. Make `cacs_cat` an ordered factor with levels `"0" < "1-100" < "101-400" < ">400"`. Make `smoking` ordered as `"Never" < "Former" < "Current"`.
+
+<details><summary>Hint</summary>
+Use `factor()` with the `levels` and `ordered = TRUE` arguments. For example:
+`scapis$cacs_cat <- factor(scapis$cacs_cat, levels = c("0", "1-100", "101-400", ">400"), ordered = TRUE)`.
+</details>
+
+```{r q4}
+
+```
+
+## Q5: Count CACS > 0
+
+How many participants have a coronary artery calcium score greater than zero? What percentage is this?
+
+<details><summary>Hint</summary>
+Use `sum(scapis$cacs_binary == 1)` for the count and `mean(scapis$cacs_binary == 1) * 100` for the percentage. Alternatively, `table(scapis$cacs_binary)`.
+</details>
+
+```{r q5}
+
+```
+
+---
+
+# Section 2 — Statistical Description {.tabset}
+
+## Q6: BMI descriptives
+
+Calculate the mean, median, standard deviation, and IQR of BMI. Remember that BMI has some missing values.
+
+<details><summary>Hint</summary>
+Use `mean(scapis$bmi, na.rm = TRUE)`, `median(...)`, `sd(...)`, and `IQR(...)`. The `na.rm = TRUE` argument removes `NA` values before computation.
+</details>
+
+```{r q6}
+
+```
+
+## Q7: SBP by sex
+
+Calculate the mean and standard deviation of systolic blood pressure (SBP) separately for males and females.
+
+<details><summary>Hint</summary>
+Use `group_by()` and `summarise()`:
+```
+scapis %>%
+  group_by(sex) %>%
+  summarise(mean_sbp = mean(sbp), sd_sbp = sd(sbp))
+```
+</details>
+
+```{r q7}
+
+```
+
+## Q8: Geometric mean of hs-CRP
+
+hs-CRP is right-skewed. Calculate its **geometric mean** (hint: the geometric mean is `exp(mean(log(x)))`). Compare it with the arithmetic mean.
+
+<details><summary>Hint</summary>
+```
+geo_mean <- exp(mean(log(scapis$hs_crp), na.rm = TRUE))
+arith_mean <- mean(scapis$hs_crp, na.rm = TRUE)
+```
+The geometric mean should be lower than the arithmetic mean for right-skewed data.
+</details>
+
+```{r q8}
+
+```
+
+## Q9: Frequency tables
+
+Create frequency tables (counts and percentages) for `smoking` and `cacs_cat`.
+
+<details><summary>Hint</summary>
+Use `table()` for counts, then `prop.table()` for proportions. Multiply by 100 for percentages:
+```
+tab <- table(scapis$smoking)
+cbind(n = tab, pct = round(prop.table(tab) * 100, 1))
+```
+</details>
+
+```{r q9}
+
+```
+
+## Q10: Cross-tabulation
+
+Create a cross-tabulation of `smoking` (rows) by `cacs_binary` (columns). Add row percentages.
+
+<details><summary>Hint</summary>
+```
+ct <- table(scapis$smoking, scapis$cacs_binary)
+# Row percentages:
+round(prop.table(ct, margin = 1) * 100, 1)
+```
+</details>
+
+```{r q10}
+
+```
+
+## Q11: Protein summary
+
+Summarise all 25 proteins by computing their mean and SD. Present the result as a tidy table sorted by descending mean.
+
+<details><summary>Hint</summary>
+Select the protein columns, pivot to long format, then summarise:
+```
+protein_cols <- c("NT_proBNP", "GDF15", "IL6", "IL18", "MPO",
+                  "MMP9", "MMP12", "SPP1", "LGALS3", "PTX3",
+                  "RETN", "LEP", "REN", "PCSK9", "FABP4",
+                  "F3", "THBD", "SELP", "DCN", "CHIT1",
+                  "SORT1", "SELE", "CSTB", "GRN", "CDH5")
+scapis %>%
+  select(all_of(protein_cols)) %>%
+  pivot_longer(everything(), names_to = "protein", values_to = "npx") %>%
+  group_by(protein) %>%
+  summarise(mean_npx = mean(npx, na.rm = TRUE),
+            sd_npx   = sd(npx, na.rm = TRUE)) %>%
+  arrange(desc(mean_npx))
+```
+</details>
+
+```{r q11}
+
+```
+
+---
+
+# Section 3 — Hypothesis Testing {.tabset}
+
+## Q12: t-test — BMI by CACS
+
+Test whether mean BMI differs between participants with CACS = 0 and CACS > 0 using a two-sample t-test. Report the p-value and the mean difference.
+
+<details><summary>Hint</summary>
+```
+t.test(bmi ~ cacs_binary, data = scapis)
+```
+The output includes the t-statistic, p-value, and group means.
+</details>
+
+```{r q12}
+
+```
+
+## Q13: Wilcoxon vs t-test — hs-CRP by CACS
+
+hs-CRP is right-skewed. Compare the results of a t-test and a Wilcoxon rank-sum test for hs-CRP between CACS groups. Which test is more appropriate here and why?
+
+<details><summary>Hint</summary>
+```
+t.test(hs_crp ~ cacs_binary, data = scapis)
+wilcox.test(hs_crp ~ cacs_binary, data = scapis)
+```
+The Wilcoxon test does not assume normality and is more robust for skewed data. Visualise the distribution with `hist(scapis$hs_crp)` to confirm the skewness.
+</details>
+
+```{r q13}
+
+```
+
+## Q14: Chi-squared — smoking vs CACS
+
+Test the association between smoking status and CACS binary using a chi-squared test. Report the test statistic and p-value.
+
+<details><summary>Hint</summary>
+```
+chisq.test(table(scapis$smoking, scapis$cacs_binary))
+```
+</details>
+
+```{r q14}
+
+```
+
+## Q15: ANOVA — GDF15 across CACS categories
+
+Compare mean GDF15 levels across the four CACS categories using one-way ANOVA. If significant, perform Tukey's HSD post-hoc test to identify which pairs differ.
+
+<details><summary>Hint</summary>
+```
+aov_fit <- aov(GDF15 ~ cacs_cat, data = scapis)
+summary(aov_fit)
+TukeyHSD(aov_fit)
+```
+</details>
+
+```{r q15}
+
+```
+
+## Q16: Kruskal-Wallis — IL6 across CACS categories
+
+Perform a Kruskal-Wallis test comparing IL6 levels across the four CACS categories. When would you prefer this over ANOVA?
+
+<details><summary>Hint</summary>
+```
+kruskal.test(IL6 ~ cacs_cat, data = scapis)
+```
+The Kruskal-Wallis test is the non-parametric alternative to one-way ANOVA. Use it when the outcome variable is not normally distributed within groups or when sample sizes are small.
+</details>
+
+```{r q16}
+
+```
+
+## Q17: Chi-squared — sex across CACS categories
+
+Test whether the sex distribution differs across the four CACS categories. What does the result suggest about sex as a risk factor for coronary calcium?
+
+<details><summary>Hint</summary>
+```
+chisq.test(table(scapis$sex, scapis$cacs_cat))
+```
+If significant, males are likely overrepresented in higher CACS groups.
+</details>
+
+```{r q17}
+
+```
+
+---
+
+# Section 4 — Table 1 with gtsummary {.tabset}
+
+## Q18: Basic Table 1
+
+Create a "Table 1" for the cohort using `tbl_summary()`. Include: age, sex, BMI, SBP, total cholesterol, HDL, fasting glucose, hs-CRP, smoking, and physical activity.
+
+<details><summary>Hint</summary>
+```
+scapis %>%
+  select(age, sex, bmi, sbp, total_chol, hdl, fasting_glucose,
+         hs_crp, smoking, physical_activity) %>%
+  tbl_summary()
+```
+</details>
+
+```{r q18}
+
+```
+
+## Q19: Stratified Table 1
+
+Stratify the Table 1 by `cacs_binary` (0 vs >0) and add p-values using `add_p()`. Add an overall column with `add_overall()`.
+
+<details><summary>Hint</summary>
+```
+scapis %>%
+  select(cacs_binary, age, sex, bmi, sbp, total_chol, hdl,
+         fasting_glucose, hs_crp, smoking, physical_activity) %>%
+  tbl_summary(by = cacs_binary) %>%
+  add_p() %>%
+  add_overall()
+```
+</details>
+
+```{r q19}
+
+```
+
+## Q20: Customised display
+
+Modify the Table 1 so that normally distributed continuous variables show **mean (SD)** while skewed variables (hs-CRP, triglycerides) show **median [IQR]**.
+
+<details><summary>Hint</summary>
+Use the `statistic` and `type` arguments inside `tbl_summary()`:
+```
+scapis %>%
+  select(cacs_binary, age, bmi, sbp, total_chol, hdl,
+         fasting_glucose, hs_crp, triglycerides) %>%
+  tbl_summary(
+    by = cacs_binary,
+    statistic = list(
+      all_continuous()  ~ "{mean} ({sd})",
+      c(hs_crp, triglycerides) ~ "{median} [{p25}, {p75}]"
+    ),
+    type = list(c(hs_crp, triglycerides) ~ "continuous")
+  ) %>%
+  add_p()
+```
+</details>
+
+```{r q20}
+
+```
+
+## Q21: Standardised mean differences
+
+Create a Table 1 stratified by `cacs_binary` that includes standardised mean differences (SMD) using `add_difference()`. SMDs > 0.1 are often considered meaningful imbalances.
+
+<details><summary>Hint</summary>
+```
+scapis %>%
+  select(cacs_binary, age, sex, bmi, sbp, total_chol, hdl,
+         fasting_glucose, smoking) %>%
+  tbl_summary(by = cacs_binary,
+              statistic = all_continuous() ~ "{mean} ({sd})") %>%
+  add_difference()
+```
+Note: `add_difference()` computes the difference in means or proportions along with a confidence interval.
+</details>
+
+```{r q21}
+
+```
+
+## Q22: Table 1 with the table1 package
+
+Use the `table1` package to create a descriptive table stratified by `cacs_binary`. Include age, sex, BMI, SBP, HDL, fasting glucose, hs-CRP, and smoking. Label the variables with readable names and add units where appropriate.
+
+<details><summary>Hint</summary>
+The `table1` package uses a formula interface. Assign labels with `label()`:
+```
+label(scapis$age)   <- "Age (years)"
+label(scapis$bmi)   <- "BMI (kg/m²)"
+label(scapis$sbp)   <- "Systolic BP (mmHg)"
+label(scapis$hdl)   <- "HDL cholesterol (mmol/L)"
+label(scapis$fasting_glucose) <- "Fasting glucose (mmol/L)"
+label(scapis$hs_crp) <- "hs-CRP (mg/L)"
+
+# cacs_binary must be a factor for stratification
+scapis$cacs_binary_f <- factor(scapis$cacs_binary,
+                               levels = c(0, 1),
+                               labels = c("CACS = 0", "CACS > 0"))
+
+table1(~ age + sex + bmi + sbp + hdl + fasting_glucose + hs_crp + smoking
+       | cacs_binary_f, data = scapis)
+```
+</details>
+
+```{r q22}
+
+```
+
+## Q23: Descriptive HTML table with htmlTable
+
+Compute the mean (SD) for age, BMI, SBP, and HDL separately for the CACS = 0 and CACS > 0 groups. Combine the results into a matrix and render a publication-quality HTML table using `htmlTable()`. Add a table caption and column headers.
+
+<details><summary>Hint</summary>
+First compute the summary statistics, then build a matrix:
+```
+desc <- scapis %>%
+  mutate(group = ifelse(cacs_binary == 0, "CACS = 0", "CACS > 0")) %>%
+  group_by(group) %>%
+  summarise(
+    Age = sprintf("%.1f (%.1f)", mean(age), sd(age)),
+    BMI = sprintf("%.1f (%.1f)", mean(bmi, na.rm = TRUE), sd(bmi, na.rm = TRUE)),
+    SBP = sprintf("%.1f (%.1f)", mean(sbp), sd(sbp)),
+    HDL = sprintf("%.2f (%.2f)", mean(hdl, na.rm = TRUE), sd(hdl, na.rm = TRUE))
+  )
+
+# Transpose so variables are rows, groups are columns
+mat <- t(as.matrix(desc[, -1]))
+colnames(mat) <- desc$group
+
+htmlTable(mat,
+          caption = "Table 1. Clinical characteristics by CACS group",
+          rnames  = c("Age (years)", "BMI (kg/m²)", "SBP (mmHg)", "HDL (mmol/L)"),
+          css.cell = "padding: 5px 15px;")
+```
+</details>
+
+```{r q23}
+
+```
+
+---
+
+# Section 5 — Figures with ggplot2 {.tabset}
+
+## Q24: Histogram — BMI by CACS group
+
+Create a histogram of BMI coloured/filled by CACS binary group (0 vs >0). Add a vertical dashed line at BMI = 30 (the obesity threshold). Use `alpha = 0.5` so both distributions are visible.
+
+<details><summary>Hint</summary>
+```
+ggplot(scapis, aes(x = bmi, fill = factor(cacs_binary))) +
+  geom_histogram(alpha = 0.5, position = "identity", bins = 30) +
+  geom_vline(xintercept = 30, linetype = "dashed", color = "red") +
+  labs(x = "BMI (kg/m²)", y = "Count", fill = "CACS > 0",
+       title = "Distribution of BMI by CACS group") +
+  theme_minimal()
+```
+</details>
+
+```{r q24}
+
+```
+
+## Q25: Boxplot — GDF15 across CACS categories
+
+Create boxplots of GDF15 across the four CACS categories. Overlay individual points with `geom_jitter()`. Use a different colour for each category.
+
+<details><summary>Hint</summary>
+```
+ggplot(scapis, aes(x = cacs_cat, y = GDF15, fill = cacs_cat)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.3, size = 0.8) +
+  labs(x = "CACS category", y = "GDF15 (NPX)",
+       title = "GDF15 levels across CACS categories") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+</details>
+
+```{r q25}
+
+```
+
+## Q26: Scatter plot — SBP vs cholesterol
+
+Create a scatter plot of SBP (y-axis) vs total cholesterol (x-axis) coloured by sex. Add linear regression lines for each sex.
+
+<details><summary>Hint</summary>
+```
+ggplot(scapis, aes(x = total_chol, y = sbp, color = sex)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(x = "Total cholesterol (mmol/L)", y = "SBP (mmHg)",
+       title = "SBP vs Total Cholesterol by Sex") +
+  theme_minimal()
+```
+</details>
+
+```{r q26}
+
+```
+
+## Q27: Stacked bar — CACS by smoking
+
+Create a stacked bar plot showing the proportion of CACS categories within each smoking group.
+
+<details><summary>Hint</summary>
+```
+ggplot(scapis, aes(x = smoking, fill = cacs_cat)) +
+  geom_bar(position = "fill") +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "Smoking status", y = "Proportion", fill = "CACS category",
+       title = "CACS distribution by smoking status") +
+  theme_minimal()
+```
+</details>
+
+```{r q27}
+
+```
+
+## Q28: Correlation heatmap
+
+Compute the Pearson correlation matrix of all 25 proteins (using pairwise complete observations) and display it as a heatmap using `corrplot`.
+
+<details><summary>Hint</summary>
+```
+protein_cols <- c("NT_proBNP", "GDF15", "IL6", "IL18", "MPO",
+                  "MMP9", "MMP12", "SPP1", "LGALS3", "PTX3",
+                  "RETN", "LEP", "REN", "PCSK9", "FABP4",
+                  "F3", "THBD", "SELP", "DCN", "CHIT1",
+                  "SORT1", "SELE", "CSTB", "GRN", "CDH5")
+cor_mat <- cor(scapis[, protein_cols], use = "pairwise.complete.obs")
+corrplot(cor_mat, method = "color", type = "upper",
+         tl.cex = 0.7, tl.col = "black",
+         title = "Protein–Protein Correlation Matrix")
+```
+</details>
+
+```{r q28}
+
+```
+
+## Q29: Volcano plot (basic)
+
+For each of the 25 proteins, compute the **mean difference** (CACS > 0 minus CACS = 0) and the **p-value** from a two-sample t-test. Create a volcano plot: x-axis = mean difference, y-axis = −log10(p-value). Colour the points that reach p < 0.05.
+
+<details><summary>Hint</summary>
+```
+protein_cols <- c("NT_proBNP", "GDF15", "IL6", "IL18", "MPO",
+                  "MMP9", "MMP12", "SPP1", "LGALS3", "PTX3",
+                  "RETN", "LEP", "REN", "PCSK9", "FABP4",
+                  "F3", "THBD", "SELP", "DCN", "CHIT1",
+                  "SORT1", "SELE", "CSTB", "GRN", "CDH5")
+
+volcano_df <- map_dfr(protein_cols, function(prot) {
+  tt <- t.test(scapis[[prot]] ~ scapis$cacs_binary)
+  tibble(
+    protein   = prot,
+    mean_diff = diff(tt$estimate),  # group 1 - group 0
+    p_value   = tt$p.value
+  )
+})
+
+ggplot(volcano_df, aes(x = mean_diff, y = -log10(p_value))) +
+  geom_point(aes(color = p_value < 0.05), size = 3) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_text_repel(data = filter(volcano_df, p_value < 0.05),
+                  aes(label = protein), size = 3) +
+  labs(x = "Mean difference (NPX)", y = expression(-log[10](p)),
+       title = "Volcano plot: Proteins vs CACS binary") +
+  theme_minimal() +
+  theme(legend.position = "none")
+```
+</details>
+
+```{r q29}
+
+```
+
+## Q30: Faceted boxplots
+
+Create faceted boxplots for 6 selected proteins (GDF15, IL6, NT_proBNP, MMP9, RETN, PCSK9) grouped by CACS binary. Use `facet_wrap()`.
+
+<details><summary>Hint</summary>
+```
+selected <- c("GDF15", "IL6", "NT_proBNP", "MMP9", "RETN", "PCSK9")
+scapis %>%
+  select(cacs_binary, all_of(selected)) %>%
+  pivot_longer(-cacs_binary, names_to = "protein", values_to = "npx") %>%
+  ggplot(aes(x = factor(cacs_binary), y = npx, fill = factor(cacs_binary))) +
+  geom_boxplot() +
+  facet_wrap(~ protein, scales = "free_y") +
+  labs(x = "CACS > 0", y = "NPX", fill = "CACS binary",
+       title = "Selected proteins by CACS group") +
+  theme_minimal()
+```
+</details>
+
+```{r q30}
+
+```
+
+---
+
+# Section 6 — Regression Analysis {.tabset}
+
+## Q31: Simple linear regression
+
+Fit a simple linear regression of GDF15 on `cacs_binary`. Interpret the intercept and slope coefficient.
+
+<details><summary>Hint</summary>
+```
+fit1 <- lm(GDF15 ~ cacs_binary, data = scapis)
+summary(fit1)
+```
+The intercept is the mean GDF15 in the CACS = 0 group. The slope is the difference in mean GDF15 between CACS > 0 and CACS = 0 groups.
+</details>
+
+```{r q31}
+
+```
+
+## Q32: Multiple linear regression
+
+Fit a multiple linear regression of GDF15 on age, sex, BMI, SBP, smoking, and cacs_binary. Which variables are statistically significant? How does the coefficient for `cacs_binary` change compared to Q31?
+
+<details><summary>Hint</summary>
+```
+fit2 <- lm(GDF15 ~ age + sex + bmi + sbp + smoking + cacs_binary,
+           data = scapis)
+summary(fit2)
+```
+Compare the coefficient for `cacs_binary` with the one from Q31. If it decreases, this suggests confounding by the added covariates.
+</details>
+
+```{r q32}
+
+```
+
+## Q33: Logistic regression
+
+Fit a logistic regression predicting `cacs_binary` from age, sex, BMI, SBP, total cholesterol, fasting glucose, and smoking. Summarise the model.
+
+<details><summary>Hint</summary>
+```
+logit_fit <- glm(cacs_binary ~ age + sex + bmi + sbp + total_chol +
+                   fasting_glucose + smoking,
+                 data = scapis, family = binomial)
+summary(logit_fit)
+```
+</details>
+
+```{r q33}
+
+```
+
+## Q34: Odds ratios
+
+Extract the odds ratios (OR) and their 95% confidence intervals from the logistic model in Q33. Which risk factors have the strongest associations?
+
+<details><summary>Hint</summary>
+```
+# Using broom:
+tidy(logit_fit, conf.int = TRUE, exponentiate = TRUE)
+```
+An OR > 1 means increased odds of CACS > 0; OR < 1 means decreased odds. Look for the largest ORs (or smallest if protective).
+</details>
+
+```{r q34}
+
+```
+
+## Q35: Publication table
+
+Create a publication-ready table of the logistic regression results using `tbl_regression()` with exponentiated coefficients (odds ratios).
+
+<details><summary>Hint</summary>
+```
+tbl_regression(logit_fit, exponentiate = TRUE) %>%
+  bold_p() %>%
+  add_global_p()
+```
+</details>
+
+```{r q35}
+
+```
+
+## Q36: Regression HTML table with htmlTable
+
+Extract the odds ratios, 95% confidence intervals, and p-values from the logistic regression model (Q33) using `broom::tidy()`. Format them into a clean matrix and render an HTML table with `htmlTable()`. Include column spanners to group the estimate and confidence interval columns.
+
+<details><summary>Hint</summary>
+Extract, format, and render:
+```
+or_df <- tidy(logit_fit, conf.int = TRUE, exponentiate = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  mutate(
+    OR    = sprintf("%.2f", estimate),
+    CI    = sprintf("(%.2f–%.2f)", conf.low, conf.high),
+    P     = ifelse(p.value < 0.001, "<0.001", sprintf("%.3f", p.value))
+  ) %>%
+  select(term, OR, CI, P)
+
+mat <- as.matrix(or_df[, -1])
+rownames(mat) <- or_df$term
+
+htmlTable(mat,
+          caption  = "Table 2. Logistic regression: Odds ratios for CACS > 0",
+          cgroup   = c("Estimate", ""),
+          n.cgroup = c(2, 1),
+          rnames   = or_df$term,
+          css.cell = "padding: 5px 15px;")
+```
+</details>
+
+```{r q36}
+
+```
+
+## Q37: Non-linearity check
+
+The relationship between age and CACS may not be linear on the log-odds scale. Add a quadratic term for age (`I(age^2)`) to the logistic model and test whether it improves the fit using a likelihood ratio test.
+
+<details><summary>Hint</summary>
+```
+logit_fit2 <- glm(cacs_binary ~ age + I(age^2) + sex + bmi + sbp +
+                    total_chol + fasting_glucose + smoking,
+                  data = scapis, family = binomial)
+anova(logit_fit, logit_fit2, test = "LRT")
+```
+A significant p-value suggests the quadratic term improves fit, indicating non-linearity.
+</details>
+
+```{r q37}
+
+```
+
+---
+
+# Section 7 — Multiple Testing Correction {.tabset}
+
+## Q38: Test all 25 proteins
+
+For each of the 25 proteins, test whether it differs between CACS = 0 and CACS > 0 using a t-test. Store the protein name, mean difference, and p-value in a data frame.
+
+<details><summary>Hint</summary>
+```
+protein_cols <- c("NT_proBNP", "GDF15", "IL6", "IL18", "MPO",
+                  "MMP9", "MMP12", "SPP1", "LGALS3", "PTX3",
+                  "RETN", "LEP", "REN", "PCSK9", "FABP4",
+                  "F3", "THBD", "SELP", "DCN", "CHIT1",
+                  "SORT1", "SELE", "CSTB", "GRN", "CDH5")
+
+results <- map_dfr(protein_cols, function(prot) {
+  tt <- t.test(scapis[[prot]] ~ scapis$cacs_binary)
+  tibble(protein = prot,
+         mean_diff = diff(tt$estimate),
+         p_value = tt$p.value)
+})
+results
+```
+</details>
+
+```{r q38}
+
+```
+
+## Q39: The multiple testing problem
+
+You tested 25 proteins at α = 0.05. If all null hypotheses were true (no real associations), how many false positives would you **expect** by chance? How many of the 25 proteins have p < 0.05 in your results?
+
+<details><summary>Hint</summary>
+Expected false positives = 25 × 0.05 = 1.25. Count the number of proteins with p < 0.05:
+```
+sum(results$p_value < 0.05)
+```
+If more than ~1–2 are significant, some may be true positives, but you cannot distinguish them without correction.
+</details>
+
+```{r q39}
+
+```
+
+## Q40: Bonferroni correction
+
+Apply the **Bonferroni correction** to the p-values. How many proteins remain significant after correction? What is the effective per-test significance level?
+
+<details><summary>Hint</summary>
+```
+results$p_bonferroni <- p.adjust(results$p_value, method = "bonferroni")
+sum(results$p_bonferroni < 0.05)
+```
+The Bonferroni-corrected threshold is 0.05 / 25 = 0.002. This method controls the **family-wise error rate** but is conservative.
+</details>
+
+```{r q40}
+
+```
+
+## Q41: FDR correction
+
+Apply the **Benjamini-Hochberg (FDR)** correction. How many proteins are significant at FDR < 0.05? Compare with the Bonferroni results.
+
+<details><summary>Hint</summary>
+```
+results$p_fdr <- p.adjust(results$p_value, method = "BH")
+sum(results$p_fdr < 0.05)
+```
+FDR controls the expected **proportion** of false positives among rejected hypotheses. It is less conservative than Bonferroni and typically retains more discoveries.
+</details>
+
+```{r q41}
+
+```
+
+## Q42: Updated volcano plot
+
+Re-create the volcano plot from Q29, but now highlight proteins that are significant after FDR correction (FDR < 0.05) in a different colour and label them.
+
+<details><summary>Hint</summary>
+```
+results <- results %>%
+  mutate(significant = p_fdr < 0.05)
+
+ggplot(results, aes(x = mean_diff, y = -log10(p_value))) +
+  geom_point(aes(color = significant), size = 3) +
+  scale_color_manual(values = c("grey60", "red")) +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue") +
+  geom_text_repel(data = filter(results, significant),
+                  aes(label = protein), size = 3) +
+  labs(x = "Mean difference (NPX)", y = expression(-log[10](p)),
+       color = "FDR < 0.05",
+       title = "Volcano plot with FDR correction") +
+  theme_minimal()
+```
+</details>
+
+```{r q42}
+
+```
+
+---
+
+# Section 8 — Missing Data Handling {.tabset}
+
+## Q43: Count missingness
+
+Count the number and percentage of missing values in each column. Which variables have the most missingness?
+
+<details><summary>Hint</summary>
+```
+miss_summary <- scapis %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "n_missing") %>%
+  mutate(pct_missing = round(n_missing / nrow(scapis) * 100, 1)) %>%
+  filter(n_missing > 0) %>%
+  arrange(desc(pct_missing))
+miss_summary
+```
+</details>
+
+```{r q43}
+
+```
+
+## Q44: Visualise missingness
+
+Visualise the missing data pattern using `naniar::vis_miss()` and `mice::md.pattern()`.
+
+<details><summary>Hint</summary>
+```
+vis_miss(scapis)
+
+# mice pattern (on columns with missing data only):
+cols_with_na <- names(scapis)[colSums(is.na(scapis)) > 0]
+md.pattern(scapis[, cols_with_na], rotate.names = TRUE)
+```
+</details>
+
+```{r q44}
+
+```
+
+## Q45: Test MAR mechanism
+
+Test whether the missingness in HDL is associated with sex. This would suggest the data are **Missing At Random (MAR)** rather than **Missing Completely At Random (MCAR)**.
+
+<details><summary>Hint</summary>
+```
+scapis$hdl_missing <- is.na(scapis$hdl)
+table(scapis$sex, scapis$hdl_missing)
+chisq.test(table(scapis$sex, scapis$hdl_missing))
+```
+If significant, missingness depends on sex → MAR mechanism.
+</details>
+
+```{r q45}
+
+```
+
+## Q46: Complete case analysis
+
+Re-run the logistic regression from Q33 using only complete cases (no missing values in any predictor). How many observations are lost? Compare the odds ratios with Q33.
+
+<details><summary>Hint</summary>
+```
+logit_cc <- glm(cacs_binary ~ age + sex + bmi + sbp + total_chol +
+                  fasting_glucose + smoking,
+                data = scapis, family = binomial)
+# glm() automatically drops rows with NA (complete case)
+nobs(logit_cc)  # compare with nrow(scapis)
+tidy(logit_cc, exponentiate = TRUE, conf.int = TRUE)
+```
+</details>
+
+```{r q46}
+
+```
+
+## Q47: Multiple imputation
+
+Use `mice` to perform multiple imputation (m = 5 imputations) on the relevant variables. Then re-fit the logistic regression from Q33 on each imputed dataset and pool the results. Compare the pooled estimates with the complete case analysis.
+
+<details><summary>Hint</summary>
+```
+# Select variables for imputation model
+vars_for_imp <- c("cacs_binary", "age", "sex", "bmi", "sbp",
+                  "total_chol", "fasting_glucose", "smoking",
+                  "hdl", "hs_crp", "triglycerides", "hba1c")
+imp_data <- scapis[, vars_for_imp]
+
+# Run mice
+imp <- mice(imp_data, m = 5, method = "pmm", seed = 123, printFlag = FALSE)
+
+# Fit model on each imputed dataset
+fit_imp <- with(imp, glm(cacs_binary ~ age + sex + bmi + sbp +
+                           total_chol + fasting_glucose + smoking,
+                         family = binomial))
+
+# Pool results
+pooled <- pool(fit_imp)
+summary(pooled, conf.int = TRUE, exponentiate = TRUE)
+```
+</details>
+
+```{r q47}
+
+```
+
+---
+
+# Section 9 — Survival / Cox Regression {.tabset}
+
+## Q48: Event summary
+
+How many CVD events occurred? What is the event rate? What is the median follow-up time? Among events, how many were MI vs Stroke?
+
+<details><summary>Hint</summary>
+```
+sum(scapis$cvd_event)
+mean(scapis$cvd_event)
+median(scapis$time_to_event)
+table(scapis$event_type)
+```
+</details>
+
+```{r q48}
+
+```
+
+## Q49: Kaplan-Meier — overall
+
+Fit a Kaplan-Meier survival curve for the entire cohort. Plot the curve with a risk table underneath.
+
+<details><summary>Hint</summary>
+```
+km_fit <- survfit(Surv(time_to_event, cvd_event) ~ 1, data = scapis)
+ggsurvplot(km_fit, data = scapis,
+           risk.table = TRUE,
+           xlab = "Time (years)", ylab = "Event-free survival",
+           title = "Kaplan-Meier: Overall CVD-free survival")
+```
+</details>
+
+```{r q49}
+
+```
+
+## Q50: KM by CACS category + log-rank
+
+Plot Kaplan-Meier curves stratified by CACS category (4 groups). Perform a log-rank test and annotate the p-value on the plot.
+
+<details><summary>Hint</summary>
+```
+km_cacs <- survfit(Surv(time_to_event, cvd_event) ~ cacs_cat, data = scapis)
+ggsurvplot(km_cacs, data = scapis,
+           pval = TRUE,
+           risk.table = TRUE,
+           legend.title = "CACS category",
+           xlab = "Time (years)", ylab = "Event-free survival",
+           title = "KM curves by CACS category")
+```
+</details>
+
+```{r q50}
+
+```
+
+## Q51: Cox regression — CACS category
+
+Fit a Cox proportional hazards model with `cacs_cat` as the predictor (reference level = "0"). Interpret the hazard ratios for each CACS group.
+
+<details><summary>Hint</summary>
+```
+cox_fit1 <- coxph(Surv(time_to_event, cvd_event) ~ cacs_cat, data = scapis)
+summary(cox_fit1)
+tidy(cox_fit1, exponentiate = TRUE, conf.int = TRUE)
+```
+A hazard ratio of 2.0 means that group has twice the rate of CVD events compared to the reference group (CACS = 0).
+</details>
+
+```{r q51}
+
+```
+
+## Q52: Multivariable Cox
+
+Fit a multivariable Cox model adjusting for age, sex, BMI, SBP, smoking, total cholesterol, and fasting glucose, in addition to `cacs_cat`. How do the hazard ratios for CACS change after adjustment?
+
+<details><summary>Hint</summary>
+```
+cox_fit2 <- coxph(Surv(time_to_event, cvd_event) ~ cacs_cat + age + sex +
+                    bmi + sbp + smoking + total_chol + fasting_glucose,
+                  data = scapis)
+summary(cox_fit2)
+tbl_regression(cox_fit2, exponentiate = TRUE)
+```
+If the HRs for CACS decrease after adjustment, confounding is present. If they remain similar, CACS is an independent predictor.
+</details>
+
+```{r q52}
+
+```
+
+## Q53: Add GDF15 to Cox model
+
+Add GDF15 (as a continuous variable in NPX units) to the multivariable Cox model. Interpret the hazard ratio for a 1-unit (1 NPX) increase in GDF15. Does GDF15 add prognostic information beyond the clinical variables?
+
+<details><summary>Hint</summary>
+```
+cox_fit3 <- coxph(Surv(time_to_event, cvd_event) ~ cacs_cat + age + sex +
+                    bmi + sbp + smoking + total_chol + fasting_glucose + GDF15,
+                  data = scapis)
+summary(cox_fit3)
+tbl_regression(cox_fit3, exponentiate = TRUE)
+```
+Compare the AIC or log-likelihood of `cox_fit2` vs `cox_fit3`:
+```
+AIC(cox_fit2, cox_fit3)
+```
+A lower AIC for `cox_fit3` suggests GDF15 improves the model.
+</details>
+
+```{r q53}
+
+```
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
